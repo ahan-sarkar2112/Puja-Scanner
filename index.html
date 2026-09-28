@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#4a3346">
+<title>Gate Scanner</title>
+<!-- QR decoder for browsers without a built-in one (Windows/Mac Chrome, Firefox, iPhone Safari) -->
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<style>
+  :root { --green:#1a8a55; --blue:#0d6efd; --red:#c62828; --amber:#b26a00; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:#fafafa; color:#111; }
+  main { max-width:600px; margin:0 auto; padding:16px 16px 32px; }
+  header { display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:10px; }
+  h1 { font-size:20px; margin:0; }
+  #net { font-size:13px; color:var(--green); white-space:nowrap; }
+  #net.off { color:var(--red); font-weight:600; }
+  button { font:inherit; border:0; border-radius:8px; cursor:pointer; }
+
+  .stats { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
+  .stat { background:#fff; border:1px solid #e3e3e3; border-radius:8px; padding:8px 10px; }
+  .stat b { display:block; font-size:22px; }
+  .stat span { font-size:12px; color:#666; }
+
+  #startBtn { width:100%; padding:15px; font-size:19px; font-weight:700; color:#fff; background:var(--green); }
+  #startBtn.on { background:#555; }
+
+  #stage { position:relative; margin-top:10px; aspect-ratio:4/3; background:#111; border-radius:10px; overflow:hidden; }
+  #stage video { width:100%; height:100%; object-fit:cover; display:block; }
+  #placeholder { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+                 color:#ddd; text-align:center; padding:24px; line-height:1.4; }
+  #frame { position:absolute; inset:14% 22%; border:3px solid rgba(255,255,255,.75); border-radius:14px; pointer-events:none; }
+  #result { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+            color:#fff; text-align:center; padding:16px; cursor:pointer; }
+  #result h2 { font-size:36px; margin:0 0 8px; letter-spacing:.5px; }
+  #result p { font-size:18px; margin:0; white-space:pre-line; line-height:1.4; }
+  #result small { margin-top:12px; font-size:13px; opacity:.85; }
+  #result.ok { background:#1a8a55; }
+  #result.bad { background:#c62828; }
+  #result.warn { background:#b26a00; }
+  #result.wait { background:rgba(17,17,17,.92); }
+
+  .row { display:flex; gap:8px; margin-top:10px; }
+  .row input { flex:1; min-width:0; padding:12px; font-size:17px; border:1px solid #bbb; border-radius:8px; }
+  #checkBtn { padding:0 18px; font-size:17px; color:#fff; background:var(--blue); }
+
+  details { margin-top:12px; font-size:13px; color:#666; }
+  #log { margin:6px 0 0; background:#eee; border-radius:8px; padding:10px; font-size:12px; max-height:140px; overflow:auto; white-space:pre-wrap; }
+  .foot { margin-top:10px; font-size:13px; color:#666; display:flex; gap:8px; justify-content:space-between; }
+  .foot span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  a { color:var(--blue); }
+
+  dialog { border:0; border-radius:12px; padding:20px; width:min(92vw,480px); }
+  dialog label { display:block; font-size:14px; margin:10px 0 4px; }
+  dialog input { width:100%; padding:10px; font-size:16px; border:1px solid #bbb; border-radius:6px; }
+  dialog .btns { display:flex; gap:8px; justify-content:flex-end; margin-top:16px; flex-wrap:wrap; }
+  dialog .btns button { padding:10px 14px; background:#e9e9e9; }
+  #saveBtn { background:var(--blue) !important; color:#fff; }
+  #testMsg { margin-top:10px; font-size:14px; min-height:1.2em; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Gate scanner</h1>
+    <span id="net">● online</span>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><b id="served">–</b><span id="servedLbl">served, all gates</span></div>
+    <div class="stat"><b id="mine">0</b><span>admitted on this phone</span></div>
+  </div>
+
+  <button id="startBtn">▶ Start Camera</button>
+
+  <div id="stage">
+    <video id="video" playsinline muted></video>
+    <div id="frame" hidden></div>
+    <div id="placeholder">Camera off — tap "Start Camera" above.</div>
+    <div id="result" hidden><h2></h2><p></p><small></small></div>
+  </div>
+
+  <div class="row">
+    <input id="manual" placeholder="Or type ticket ID (e.g. TKT-XXXX-XXXX)" autocapitalize="characters" autocomplete="off" spellcheck="false">
+    <button id="checkBtn">Check</button>
+  </div>
+
+  <details><summary>Technical log</summary><pre id="log"></pre></details>
+  <div class="foot"><span id="apiLabel"></span><a href="#" id="settingsLink">Settings</a></div>
+</main>
+
+<dialog id="settings">
+  <h3 style="margin:0;font-size:18px;color:#111">Scanner settings</h3>
+  <label for="sApi">Apps Script web app URL (ends in /exec)</label>
+  <input id="sApi" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off">
+  <label for="sKey">Gate key</label>
+  <input id="sKey" type="password" autocomplete="off">
+  <label for="sGate">Gate / volunteer name</label>
+  <input id="sGate" placeholder="Main gate">
+  <div id="testMsg"></div>
+  <div class="btns">
+    <button id="testBtn">Test connection</button>
+    <button id="cancelBtn">Cancel</button>
+    <button id="saveBtn">Save</button>
+  </div>
+</dialog>
+
+<script>
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+};
+let API = store.get('api', ''), KEY = store.get('key', ''), GATE = store.get('gate', 'Main gate');
+let stream = null, detector = null, wakeLock = null;
+let busy = false, lastCode = '', lastAt = 0, lastDecode = 0, hideTimer = null;
+let mine = Number(store.get('mine:' + new Date().toDateString(), '0')) || 0;
+const retried = new Set(); // ticket IDs whose admit request failed on this phone (may have gone through)
+const video = $('video');
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+function log(m) {
+  const t = new Date().toTimeString().slice(0, 8);
+  $('log').textContent = (t + ' ' + m + '\n' + $('log').textContent).slice(0, 5000);
+}
+function showApi() { $('apiLabel').textContent = API ? 'Gate: ' + GATE : 'Not set up yet'; }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+/* ---------- counters ---------- */
+function setCounts(d) {
+  if (d && typeof d.served === 'number') {
+    $('served').textContent = d.served + ' / ' + d.total;
+    $('servedLbl').textContent = 'served, all gates (' + Math.max(d.total - d.served, 0) + ' left)';
+  }
+}
+function bumpMine() {
+  mine++;
+  $('mine').textContent = mine;
+  store.set('mine:' + new Date().toDateString(), String(mine));
+}
+$('mine').textContent = mine;
+
+/* ---------- network status ---------- */
+function netStatus() {
+  const on = navigator.onLine;
+  $('net').textContent = on ? '● online' : '● OFFLINE';
+  $('net').className = on ? '' : 'off';
+}
+addEventListener('online', netStatus); addEventListener('offline', netStatus); netStatus();
+
+/* ---------- API ---------- */
+async function call(params, timeoutMs) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs || 15000);
+  try {
+    const url = API + '?' + new URLSearchParams(Object.assign({ key: KEY, gate: GATE }, params));
+    const res = await fetch(url, { redirect: 'follow', signal: ctrl.signal });
+    const text = await res.text();
+    try { return JSON.parse(text); }
+    catch (e) { throw new Error('Unexpected reply — check the URL ends in /exec and access is "Anyone"'); }
+  } finally { clearTimeout(t); }
+}
+async function refreshStats() {
+  if (!API || !KEY) return;
+  try { const d = await call({ action: 'ping' }, 10000); if (d.ok) setCounts(d); } catch (e) {}
+}
+
+/* ---------- settings ---------- */
+function openSettings() {
+  $('sApi').value = API; $('sKey').value = KEY; $('sGate').value = GATE; $('testMsg').textContent = '';
+  $('settings').showModal();
+}
+$('settingsLink').onclick = e => { e.preventDefault(); openSettings(); };
+$('cancelBtn').onclick = () => $('settings').close();
+$('saveBtn').onclick = () => {
+  API = $('sApi').value.trim(); KEY = $('sKey').value.trim(); GATE = $('sGate').value.trim() || 'Main gate';
+  store.set('api', API); store.set('key', KEY); store.set('gate', GATE);
+  $('settings').close(); showApi(); log('settings saved'); refreshStats();
+};
+$('testBtn').onclick = async () => {
+  const m = $('testMsg');
+  const api = $('sApi').value.trim(), key = $('sKey').value.trim();
+  if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(api)) { m.style.color = 'var(--red)'; m.textContent = 'URL should start with https://script.google.com/ and end with /exec'; return; }
+  m.style.color = '#666'; m.textContent = 'Testing…';
+  const save = [API, KEY]; API = api; KEY = key;
+  try {
+    const d = await call({ action: 'ping' }, 15000);
+    if (d.code === 'PONG') { m.style.color = 'var(--green)'; m.textContent = '✔ Connected to ' + d.event + ' — ' + d.served + ' of ' + d.total + ' tickets used so far.'; setCounts(d); }
+    else if (d.code === 'AUTH') { m.style.color = 'var(--red)'; m.textContent = '✖ Wrong gate key.'; }
+    else { m.style.color = 'var(--red)'; m.textContent = '✖ Unexpected reply: ' + (d.msg || d.code); }
+  } catch (e) {
+    m.style.color = 'var(--red)'; m.textContent = '✖ Could not connect: ' + (e.name === 'AbortError' ? 'timed out' : e.message);
+  } finally { [API, KEY] = save; }
+};
+
+/* ---------- decoder ---------- */
+async function initDetector() {
+  if ('BarcodeDetector' in window) {
+    try {
+      const f = await BarcodeDetector.getSupportedFormats();
+      if (f.includes('qr_code')) { detector = new BarcodeDetector({ formats: ['qr_code'] }); log('decoder: built-in'); return; }
+    } catch (e) {}
+  }
+  log(window.jsQR ? 'decoder: jsQR' : 'ERROR: QR decoder did not load (no internet?) — use manual entry');
+}
+async function decode() {
+  if (detector) { const r = await detector.detect(video); return r.length ? r[0].rawValue : null; }
+  if (!window.jsQR) return null;
+  const w = video.videoWidth, h = video.videoHeight;
+  if (!w) return null;
+  const s = Math.min(1, 720 / Math.max(w, h));
+  canvas.width = (w * s) | 0; canvas.height = (h * s) | 0;
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const c = jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
+  return c ? c.data : null;
+}
+
+/* ---------- camera ---------- */
+const CAM_ERR = {
+  NotAllowedError: 'Camera permission is blocked. Tap the lock/ⓘ icon next to the address, allow Camera, then reload.',
+  NotFoundError: 'No camera found on this device.',
+  NotReadableError: 'Camera is being used by another app. Close it and try again.',
+  OverconstrainedError: 'This camera is not supported. Try another browser.'
+};
+async function startCamera() {
+  if (stream) return stopCamera();
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    $('placeholder').textContent = 'Camera needs the https:// link of this page.'; return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+  } catch (e) {
+    stream = null;
+    $('placeholder').textContent = CAM_ERR[e.name] || ('Camera error: ' + e.message);
+    log('camera error: ' + e.name);
+    return;
+  }
+  video.srcObject = stream;
+  await video.play();
+  $('placeholder').hidden = true; $('frame').hidden = false;
+  $('startBtn').textContent = '■ Stop Camera'; $('startBtn').classList.add('on');
+  keepAwake();
+  log('camera on');
+  loop();
+}
+function stopCamera() {
+  stream.getTracks().forEach(t => t.stop());
+  stream = null; video.srcObject = null;
+  $('placeholder').hidden = false; $('placeholder').textContent = 'Camera off — tap "Start Camera" above.';
+  $('frame').hidden = true;
+  $('startBtn').textContent = '▶ Start Camera'; $('startBtn').classList.remove('on');
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  log('camera off');
+}
+async function loop() {
+  if (!stream) return;
+  const now = performance.now();
+  if (!busy && video.readyState >= 2 && now - lastDecode > 120) {
+    lastDecode = now;
+    try { const text = await decode(); if (text) onCode(text); } catch (e) {}
+  }
+  requestAnimationFrame(loop);
+}
+$('startBtn').onclick = startCamera;
+
+async function keepAwake() {
+  try { if ('wakeLock' in navigator && stream) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && stream) keepAwake(); });
+
+/* ---------- result overlay ---------- */
+function show(kind, title, sub, hint) {
+  const r = $('result');
+  r.className = kind;
+  r.querySelector('h2').textContent = title;
+  r.querySelector('p').textContent = sub || '';
+  r.querySelector('small').textContent = hint || '';
+  r.hidden = false;
+}
+function hold(ms) {
+  busy = true;
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(dismiss, ms);
+}
+function dismiss() { clearTimeout(hideTimer); $('result').hidden = true; busy = false; }
+$('result').onclick = () => { if (!$('result').classList.contains('wait')) dismiss(); };
+
+/* ---------- scanning ---------- */
+function onCode(raw) {
+  const now = Date.now();
+  // Ignore the same QR while it stays in view (and for 20s after), so a just-admitted
+  // ticket doesn't flash "ALREADY USED" on a re-read.
+  if (raw === lastCode && now - lastAt < 20000) { lastAt = now; return; }
+  lastCode = raw; lastAt = now;
+  const m = String(raw).toUpperCase().match(/TKT-[A-Z0-9]+-[A-Z0-9]+/);
+  if (!m) {
+    show('bad', '✖ NOT OUR TICKET', 'This QR is not a ticket for this event.', 'Tap to continue');
+    beep(false); return hold(4000);
+  }
+  verify(m[0]);
+}
+
+async function verify(id) {
+  if (!API || !KEY) { log('set API URL and gate key first'); openSettings(); return; }
+  busy = true;
+  show('wait', 'Checking…', id);
+  let d = null, err = null;
+  for (let attempt = 1; attempt <= 2 && !d; attempt++) {
+    try { d = await call({ action: 'admit', id }, 12000); }
+    catch (e) {
+      err = e; log('network error (try ' + attempt + '): ' + (e.name === 'AbortError' ? 'timeout' : e.message));
+      retried.add(id);
+      if (attempt === 1) { show('wait', 'Slow network — retrying…', id); await new Promise(r => setTimeout(r, 1200)); }
+    }
+  }
+
+  if (!d) {
+    show('bad', 'NO CONNECTION', 'Could not reach the ticket sheet.\nMove to better signal and scan again.', 'Tap to continue');
+    beep(false); lastCode = ''; return hold(6000);
+  }
+  log(id + ' → ' + d.code);
+  setCounts(d);
+  const who = [d.name, d.label].filter(Boolean).join(' · ');
+  const extra = [d.dept, d.roll].filter(Boolean).join(' · ');
+
+  if (d.code === 'ADMITTED') {
+    retried.delete(id); bumpMine();
+    show('ok', '✔ ADMIT', who + (extra ? '\n' + extra : ''), id);
+    beep(true); return hold(2200);
+  }
+  if (d.code === 'USED' && retried.has(id)) {
+    // Our earlier request timed out but actually went through — this person hasn't been served yet.
+    retried.delete(id); bumpMine();
+    show('ok', '✔ ADMIT', who + '\n(recorded on this phone a moment ago)', id);
+    beep(true); return hold(2600);
+  }
+  if (d.code === 'USED') {
+    show('bad', '✖ ALREADY USED', 'Used ' + d.usedAt + (d.gate ? ' at ' + d.gate : '') + '\n' + who, 'Tap to continue');
+    beep(false); return hold(6000);
+  }
+  if (d.code === 'AUTH') {
+    show('bad', 'WRONG GATE KEY', 'Open Settings and re-enter the gate key.', 'Tap to continue');
+    beep(false); lastCode = ''; return hold(6000);
+  }
+  const msg = { NOT_FOUND: 'Ticket not found', NOT_ISSUED: d.msg || 'Ticket not valid', BAD: 'Not a ticket ID' }[d.code] || d.msg || d.code;
+  show('bad', '✖ ' + msg.toUpperCase(), (who ? who + '\n' : '') + id, 'Tap to continue');
+  beep(false); hold(6000);
+}
+
+$('checkBtn').onclick = () => {
+  let v = $('manual').value.trim().toUpperCase().replace(/\s+/g, '');
+  if (!v) return;
+  if (!v.startsWith('TKT-')) v = 'TKT-' + v;
+  $('manual').value = ''; $('manual').blur();
+  lastCode = v; lastAt = Date.now();
+  verify(v);
+};
+$('manual').addEventListener('keydown', e => { if (e.key === 'Enter') $('checkBtn').click(); });
+
+/* ---------- feedback ---------- */
+let audio;
+function beep(good) {
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.frequency.value = good ? 880 : 220; o.type = good ? 'sine' : 'square';
+    g.gain.value = 0.18; o.connect(g); g.connect(audio.destination);
+    o.start(); o.stop(audio.currentTime + (good ? 0.15 : 0.5));
+  } catch (e) {}
+  if (navigator.vibrate) navigator.vibrate(good ? 80 : [250, 100, 250]);
+}
+
+/* ---------- boot ---------- */
+log('ready');
+showApi();
+initDetector();
+refreshStats();
+setInterval(() => { if (document.visibilityState === 'visible') refreshStats(); }, 20000);
+if (!API || !KEY) setTimeout(openSettings, 300);
+</script>
+</body>
+</html>
