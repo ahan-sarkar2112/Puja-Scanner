@@ -10,6 +10,7 @@
 <style>
   :root { --green:#1a8a55; --blue:#0d6efd; --red:#c62828; --amber:#b26a00; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  [hidden] { display:none !important; }
   body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:#fafafa; color:#111; }
   main { max-width:600px; margin:0 auto; padding:16px 16px 32px; }
   header { display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:10px; }
@@ -114,7 +115,8 @@ const store = {
 };
 let API = store.get('api', ''), KEY = store.get('key', ''), GATE = store.get('gate', 'Main gate');
 let stream = null, detector = null, wakeLock = null;
-let busy = false, lastCode = '', lastAt = 0, lastDecode = 0, hideTimer = null;
+let busy = false, lastDecode = 0, hideTimer = null;
+const seen = new Map(); // ticket → last time the camera saw it (ignore repeats for 20s)
 let mine = Number(store.get('mine:' + new Date().toDateString(), '0')) || 0;
 const retried = new Set(); // ticket IDs whose admit request failed on this phone (may have gone through)
 const video = $('video');
@@ -293,9 +295,11 @@ function onCode(raw) {
   const now = Date.now();
   // Ignore the same QR while it stays in view (and for 20s after), so a just-admitted
   // ticket doesn't flash "ALREADY USED" on a re-read.
-  if (raw === lastCode && now - lastAt < 20000) { lastAt = now; return; }
-  lastCode = raw; lastAt = now;
   const m = String(raw).toUpperCase().match(/TKT-[A-Z0-9]+-[A-Z0-9]+/);
+  const k = m ? m[0] : String(raw);
+  if (seen.has(k) && now - seen.get(k) < 20000) { seen.set(k, now); return; }
+  seen.set(k, now);
+  if (seen.size > 200) for (const [key, t] of seen) if (now - t > 20000) seen.delete(key);
   if (!m) {
     show('bad', '✖ NOT OUR TICKET', 'This QR is not a ticket for this event.', 'Tap to continue');
     beep(false); return hold(4000);
@@ -319,7 +323,7 @@ async function verify(id) {
 
   if (!d) {
     show('bad', 'NO CONNECTION', 'Could not reach the ticket sheet.\nMove to better signal and scan again.', 'Tap to continue');
-    beep(false); lastCode = ''; return hold(6000);
+    beep(false); seen.delete(id); return hold(6000);
   }
   log(id + ' → ' + d.code);
   setCounts(d);
@@ -343,7 +347,7 @@ async function verify(id) {
   }
   if (d.code === 'AUTH') {
     show('bad', 'WRONG GATE KEY', 'Open Settings and re-enter the gate key.', 'Tap to continue');
-    beep(false); lastCode = ''; return hold(6000);
+    beep(false); seen.delete(id); return hold(6000);
   }
   const msg = { NOT_FOUND: 'Ticket not found', NOT_ISSUED: d.msg || 'Ticket not valid', BAD: 'Not a ticket ID' }[d.code] || d.msg || d.code;
   show('bad', '✖ ' + msg.toUpperCase(), (who ? who + '\n' : '') + id, 'Tap to continue');
@@ -355,7 +359,7 @@ $('checkBtn').onclick = () => {
   if (!v) return;
   if (!v.startsWith('TKT-')) v = 'TKT-' + v;
   $('manual').value = ''; $('manual').blur();
-  lastCode = v; lastAt = Date.now();
+  seen.set(v, Date.now());
   verify(v);
 };
 $('manual').addEventListener('keydown', e => { if (e.key === 'Enter') $('checkBtn').click(); });
