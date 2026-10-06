@@ -90,7 +90,7 @@
   </div>
 
   <details><summary>Technical log</summary><pre id="log"></pre></details>
-  <div class="foot"><span id="apiLabel"></span><a href="#" id="settingsLink">Settings</a></div>
+  <div class="foot"><span id="apiLabel"></span><span id="ver" style="color:#999"></span><a href="#" id="settingsLink">Settings</a></div>
 </main>
 
 <dialog id="settings">
@@ -122,7 +122,8 @@ const gateTag = () => GATE + ' #' + DEVICE;   // what gets written in the Gate c
 let stream = null, detector = null, wakeLock = null;
 let busy = false, lastDecode = 0, hideTimer = null;
 const seen = new Map(); // ticket → last time the camera saw it
-const IN_VIEW_GAP = 2500; // a QR not seen for this long has left the camera; showing it again re-checks it
+const IN_VIEW_GAP = 1000; // a QR not seen for 1 s has left the camera; showing it again re-checks it
+const VERSION = '6 Oct · v4';
 let mine = Number(store.get('mine:' + new Date().toDateString(), '0')) || 0;
 const retried = new Map(); // ticket → time an admit request from this phone failed (it may still have gone through)
 const video = $('video');
@@ -309,7 +310,10 @@ async function loop(gen) {
     try {
       const text = await decode();
       if (text) {
-        if (busy) { const k = keyOf(text); if (seen.has(k)) seen.set(k, Date.now()); }
+        if (busy) {
+          const k = keyOf(text);
+          if (seen.has(k)) { if (Date.now() - seen.get(k) > IN_VIEW_GAP) seen.delete(k); else seen.set(k, Date.now()); }
+        }
         else onCode(text);
       }
     } catch (e) {}
@@ -423,7 +427,8 @@ async function verifyInner(id) {
     beep(true); return hold(2600);
   }
   if (d.code === 'USED') {
-    show('bad', '✖ ALREADY USED', 'Used ' + d.usedAt + (d.gate ? ' at ' + d.gate : '') + '\n' + who, 'Tap to continue');
+    const here = (d.gate || '') === gateTag();
+    show('bad', '✖ ALREADY USED', (here ? 'Already scanned on THIS phone at ' + d.usedAt : 'Used ' + d.usedAt + (d.gate ? ' at ' + d.gate : '')) + '\n' + who, 'Tap to continue');
     beep(false); return hold(6000);
   }
   if (d.code === 'BUSY' || d.code === 'ERROR') {
@@ -465,7 +470,8 @@ function beep(good) {
 }
 
 /* ---------- boot ---------- */
-log('ready');
+log('ready — scanner ' + VERSION);
+$('ver').textContent = VERSION;
 showApi();
 initDetector();
 refreshStats();
